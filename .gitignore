@@ -1,0 +1,10 @@
+# macos
+.DS_Store
+.localized
+
+# python
+.mypy_cache
+
+# src
+src/db/data
+**/.env
