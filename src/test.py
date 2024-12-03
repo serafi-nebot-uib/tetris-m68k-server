@@ -1,7 +1,7 @@
 import socket
 from os import getenv
 from binascii import hexlify
-from main import df, ScoreReq, ScorePub, Score, ScoreList
+from server import df, ScoreReq, ScorePub, Score, ScoreList
 from obj2bin import encode
 
 def tohex(d): return hexlify(d).decode()
