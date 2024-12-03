@@ -14,33 +14,30 @@ from obj2bin import Const, Field, Child, pack, encode, decode
 def strenc(s: str, l: int) -> bytes: return bytes(ord(s[i]) if i<len(s) else 0 for i in range(l))
 def strdec(b: bytes, l: int) -> str: return "".join(map(chr, b[:l]))
 
-# TODO: come up with a cleaner API definition
-ACK_ID = 0x01
-SCORE_ID = 0x02
-SCORE_LIST_ID = 0x03
-SCORE_REQ = 0x04
-SCORE_PUB = 0x05
+# TODO: API definition not ideal, but better than previous one
+df_ids = { "Ack": 0x01, "Score": 0x02, "ScoreList": 0x03, "ScoreReq": 0x04, "ScorePub": 0x05 }
 
-@pack(_id=Const(ACK_ID, "B"))
+@pack(_id=Const(df_ids["Ack"], "B"))
 class Ack: pass
 
-@pack(_id=Const(_id:=0x01, "B"), player=Field("<6s", enc=lambda x: strenc(x, 6), dec=lambda x: strdec(x, 6)), score=Field("<L"))
+@pack(_id=Const(df_ids["Score"], "B"), player=Field("<6s", enc=lambda x: strenc(x, 6), dec=lambda x: strdec(x, 6)), score=Field("<L"))
 class Score: player: str; score: int
 
-@pack(_id=Const(SCORE_LIST_ID, "B"), score_count=Field("H", meta=True), scores=Child(Score, count="score_count"))
+@pack(_id=Const(df_ids["ScoreList"], "B"), score_count=Field("H", meta=True), scores=Child(Score, count="score_count"))
 class ScoreList:
   scores: list[Score] = field(default_factory=list)
   @property
   def score_count(self) -> int: return len(self.scores)
 
-@pack(_id=Const(SCORE_REQ, "B"), count=Field("H"))
+@pack(_id=Const(df_ids["ScoreReq"], "B"), count=Field("H"))
 class ScoreReq: count: int
 
-@pack(_id=Const(SCORE_PUB, "B"), score=Child(Score))
+@pack(_id=Const(df_ids["ScorePub"], "B"), score=Child(Score))
 class ScorePub: score: Score
 
-DF = { ACK_ID: Ack, SCORE_ID: Score, SCORE_LIST_ID: ScoreList, SCORE_REQ: ScoreReq, SCORE_PUB: ScorePub }
-def df(buff: bytes) -> tuple: return decode(DF[buff[0]], buff) if buff[0] in DF else (None, 0)
+l = locals()
+df_types = { df_ids[x]: l[x] for x in df_ids }
+def df_decode(data: bytes) -> tuple: return decode(df_types[data[0]], data) if data[0] in df_types else (None, 0)
 
 # ******************** server ********************
 
@@ -59,7 +56,7 @@ class TCPHandler(socketserver.BaseRequestHandler):
       while (data := self.request.recv(1024)):
         if DEBUG > 0: print(f"{cid} recv {len(data)}B: {hexlify(data).decode()}")
         try:
-          recv, sz = df(data)
+          recv, sz = df_decode(data)
           assert recv, "unkown packet type"
           print(f"{cid} -> {recv}")
           resp: object | None = None
