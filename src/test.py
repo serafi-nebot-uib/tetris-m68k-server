@@ -18,7 +18,7 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
   # print(f"recv: {tohex(recv)}")
   # print(df_decode(recv)[0])
 
-  data, _ = encode(ScoreReq(ScoreType.B, 5))
+  data, _ = encode(ScoreReq(ScoreType.A, 5))
   print(f"send: {tohex(data)}")
   s.sendall(data)
   recv = s.recv(1024)

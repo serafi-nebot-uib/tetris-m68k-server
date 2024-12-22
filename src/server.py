@@ -30,8 +30,8 @@ class ScoreType(Enum):
 
 @pack(_id=Const(df_ids["Score"], "B"),
       player=Field(">6s", enc=lambda x: strenc(x, 6), dec=lambda x: strdec(x, 6)),
-      score_type=Child(ScoreType, count=1), score=Field(">L"))
-class Score: player: str; score_type: ScoreType; score: int
+      score_type=Child(ScoreType, count=1), score=Field(">L"), level=Field(">H"))
+class Score: player: str; score_type: ScoreType; score: int; level: int
 
 @pack(_id=Const(df_ids["ScoreList"], "B"), score_count=Field(">H", meta=True), scores=Child(Score, count="score_count"))
 class ScoreList:
@@ -55,8 +55,9 @@ DEBUG, HOST, PORT = int(getenv("DEBUG", "0")), getenv("HOST", "127.0.0.1"), int(
 
 db_opts, db_opts_env = {"host":"127.0.0.1"}, {"MYSQL_DATABASE":"database","MYSQL_USER":"user","MYSQL_PASSWORD":"password","MYSQL_PORT":"port"}
 with Path("db/.env").open() as f: db_opts.update({db_opts_env[k]:v for k,v in (l.strip().split("=") for l in f) if k in db_opts_env})
-conn = mysql.connector.connect(**db_opts)
 
+# NOTE: database connection is established every request because the connector wasn't querying new data until new connection.
+#       there's probably a better solution, but for the current situation this works fine
 class ScoreServerHandler(socketserver.BaseRequestHandler):
   def handle(self):
     cid = "[" + ":".join(map(str, self.client_address)) + "]"
@@ -71,17 +72,17 @@ class ScoreServerHandler(socketserver.BaseRequestHandler):
           resp: object | None = None
           match recv:
             case ScoreReq():
-              with conn.cursor() as curr:
+              with mysql.connector.connect(**db_opts) as conn, conn.cursor() as curr:
                 if recv.score_type != ScoreType.ALL:
-                  curr.execute("select player, type, score from score order by score desc limit %s", (recv.count if recv.count > 0 else 5,))
+                  curr.execute("select player, type, score, level from score order by score desc limit %s", (recv.count if recv.count > 0 else 5,))
                 else:
-                  curr.execute("select player, type, score from score where type = %s order by score desc limit %s",
+                  curr.execute("select player, type, score, level from score where type = %s order by score desc limit %s",
                                (str(recv.score_type), recv.count if recv.count > 0 else 5))
-                resp = ScoreList([Score(player, ScoreType[stype], score) for player, stype, score in curr.fetchall()])
+                resp = ScoreList([Score(player, ScoreType[stype], score, level) for player, stype, score, level in curr.fetchall()])
             case ScorePub():
-              with conn.cursor() as curr:
-                score = recv.score
-                curr.execute("insert into score (player, type, score) values (%s, %s, %s)", (score.player, score.score_type, score.score))
+              with mysql.connector.connect(**db_opts) as conn, conn.cursor() as curr:
+                curr.execute("insert into score (player, type, score, level) values (%s, %s, %s, %s)",
+                             (recv.score.player, recv.score.score_type, recv.score.score, recv.score.level))
                 conn.commit()
                 resp = Ack()
           if resp is None: continue
@@ -109,6 +110,5 @@ if __name__ == "__main__":
   except KeyboardInterrupt:
     print("\nserver stopped by user")
   finally:
-    conn.close()
     server.shutdown()
     server.socket.close()
