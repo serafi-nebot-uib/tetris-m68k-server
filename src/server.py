@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import traceback
 import socketserver
 import mysql.connector
 from os import getenv
 from binascii import hexlify
 from pathlib import Path
+from enum import Enum
 from dataclasses import field
 from obj2bin import Const, Field, Child, pack, encode, decode
 
@@ -20,20 +22,28 @@ df_ids = { "Ack": 0x01, "Score": 0x02, "ScoreList": 0x03, "ScoreReq": 0x04, "Sco
 @pack(_id=Const(df_ids["Ack"], "B"))
 class Ack: pass
 
-@pack(_id=Const(df_ids["Score"], "B"), player=Field("<6s", enc=lambda x: strenc(x, 6), dec=lambda x: strdec(x, 6)), score=Field("<L"))
-class Score: player: str; score: int
+@pack(value=Field("B"))
+class ScoreType(Enum):
+  ALL = 0x00; A = 0x01; B = 0x02
+  def __repr__(self) -> str: return self.name
+  def __str__(self) -> str: return self.name
 
-@pack(_id=Const(df_ids["ScoreList"], "B"), score_count=Field("H", meta=True), scores=Child(Score, count="score_count"))
+@pack(_id=Const(df_ids["Score"], "B"),
+      player=Field(">6s", enc=lambda x: strenc(x, 6), dec=lambda x: strdec(x, 6)),
+      score_type=Child(ScoreType, count=1), score=Field(">L"))
+class Score: player: str; score_type: ScoreType; score: int
+
+@pack(_id=Const(df_ids["ScoreList"], "B"), score_count=Field(">H", meta=True), scores=Child(Score, count="score_count"))
 class ScoreList:
   scores: list[Score] = field(default_factory=list)
   @property
   def score_count(self) -> int: return len(self.scores)
 
-@pack(_id=Const(df_ids["ScoreReq"], "B"), count=Field("H"))
-class ScoreReq: count: int
+@pack(_id=Const(df_ids["ScoreReq"], "B"), score_type=Child(ScoreType, count=1), count=Field(">H"))
+class ScoreReq: score_type: ScoreType; count: int
 
-@pack(_id=Const(df_ids["ScorePub"], "B"), score=Child(Score))
-class ScorePub: score: Score
+@pack(_id=Const(df_ids["ScorePub"], "B"), score_type=Child(ScoreType, count=1), score=Child(Score))
+class ScorePub: score_type: ScoreType; score: Score
 
 l = locals()
 df_types = { df_ids[x]: l[x] for x in df_ids }
@@ -43,12 +53,11 @@ def df_decode(data: bytes) -> tuple: return decode(df_types[data[0]], data) if d
 
 DEBUG, HOST, PORT = int(getenv("DEBUG", "0")), getenv("HOST", "127.0.0.1"), int(getenv("PORT", "6969"))
 
-db_opts = { "host": "127.0.0.1" }
-DB_ENV_OPTS = { "MYSQL_DATABASE": "database", "MYSQL_USER": "user", "MYSQL_PASSWORD": "password", "MYSQL_PORT": "port" }
-with Path("db/.env").open() as f: db_opts.update({ DB_ENV_OPTS[k]: v for k, v in (l.strip().split("=") for l in f) if k in DB_ENV_OPTS})
+db_opts, db_opts_env = {"host":"127.0.0.1"}, {"MYSQL_DATABASE":"database","MYSQL_USER":"user","MYSQL_PASSWORD":"password","MYSQL_PORT":"port"}
+with Path("db/.env").open() as f: db_opts.update({db_opts_env[k]:v for k,v in (l.strip().split("=") for l in f) if k in db_opts_env})
 conn = mysql.connector.connect(**db_opts)
 
-class TCPHandler(socketserver.BaseRequestHandler):
+class ScoreServerHandler(socketserver.BaseRequestHandler):
   def handle(self):
     cid = "[" + ":".join(map(str, self.client_address)) + "]"
     print(f"{cid} connection opened")
@@ -63,11 +72,16 @@ class TCPHandler(socketserver.BaseRequestHandler):
           match recv:
             case ScoreReq():
               with conn.cursor() as curr:
-                curr.execute("select player, score from score order by score desc limit %s", (recv.count if recv.count > 0 else 5,))
-                resp = ScoreList([Score(*x) for x in curr.fetchall()]) # type: ignore[call-arg]
+                if recv.score_type != ScoreType.ALL:
+                  curr.execute("select player, type, score from score order by score desc limit %s", (recv.count if recv.count > 0 else 5,))
+                else:
+                  curr.execute("select player, type, score from score where type = %s order by score desc limit %s",
+                               (str(recv.score_type), recv.count if recv.count > 0 else 5))
+                resp = ScoreList([Score(player, ScoreType[stype], score) for player, stype, score in curr.fetchall()])
             case ScorePub():
               with conn.cursor() as curr:
-                curr.execute("insert into score (player, score) values (%s, %s)", (recv.score.player, recv.score.score))
+                score = recv.score
+                curr.execute("insert into score (player, type, score) values (%s, %s, %s)", (score.player, score.score_type, score.score))
                 conn.commit()
                 resp = Ack()
           if resp is None: continue
@@ -76,14 +90,19 @@ class TCPHandler(socketserver.BaseRequestHandler):
           if DEBUG > 0: print(f"{cid} send {sz}B: {hexlify(data).decode()}")
           self.request.sendall(data)
         except Exception as e:
+          if DEBUG > 0: traceback.print_exc()
           print(f"{cid} invalid packet received : {e}")
     except ConnectionResetError:
       pass
     print(f"{cid} connection closed")
 
+class ScoreServer(socketserver.TCPServer):
+  timeout = 3
+  def handle_timeout(self): print("server timeout")
+
 if __name__ == "__main__":
   HOST, PORT = getenv("HOST", "127.0.0.1"), int(getenv("PORT", "6969"))
-  server = socketserver.TCPServer((HOST, PORT), TCPHandler)
+  server = ScoreServer((HOST, PORT), ScoreServerHandler)
   print(f"server listening on: {HOST}:{PORT}")
   try:
     server.serve_forever()
@@ -91,3 +110,5 @@ if __name__ == "__main__":
     print("\nserver stopped by user")
   finally:
     conn.close()
+    server.shutdown()
+    server.socket.close()
