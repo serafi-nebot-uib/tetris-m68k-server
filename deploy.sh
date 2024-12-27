@@ -1,18 +1,25 @@
 #!/bin/bash
 
-# deploy changes to server (tetris-m68k.westeurope.cloudapp.azure.com)
-rsync -avz -e "ssh" \
-	--exclude=".mypy_cache" \
-	--exclude="__pycache__" \
-	--exclude="db" \
-	$PWD/src/* tetris@tetris-m68k:/home/tetris/tetris-m68k-server/
-
-# restart docker containers
-cd src/db/
+set -o allexport
+source .env
+set +o allexport
+TARGET_DIR="\${HOME}/tetris-m68k-server"
 DOCKER_PREV_CTX=$(docker context show)
 docker context use tetris-m68k
-docker compose down
-docker compose up -d --build
+
+# setup folder structure if it does not exist
+ssh tetris@tetris-m68k "[ -d '${TARGET_DIR}' ] || mkdir -p ${TARGET_DIR}"
+ssh tetris@tetris-m68k "[ -d '${TARGET_DIR}/.venv' ] || python3 -m venv ${TARGET_DIR}/.venv"
+
+# stop services
+docker compose -f src/db/docker-compose.yml down
+
+# deploy changes
+rsync -avz -e "ssh" $PWD/start.sh $PWD/.env $PWD/src/server.py $PWD/requirements.txt tetris@tetris-m68k:${TARGET_DIR}/
+
+# start services 
+docker compose -f src/db/docker-compose.yml up -d --build
+# ssh tetris@tetris-m68k "${TARGET_DIR}/start.sh"
+
+# cleanup
 docker context use ${DOCKER_PREV_CTX}
-unset DOCKER_PREV_CTX
-cd -

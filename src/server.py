@@ -51,10 +51,15 @@ def df_decode(data: bytes) -> tuple: return decode(df_types[data[0]], data) if d
 
 # ******************** server ********************
 
-DEBUG, HOST, PORT = int(getenv("DEBUG", "0")), getenv("HOST", "127.0.0.1"), int(getenv("PORT", "6969"))
+DEBUG, HOST, PORT = int(getenv("DEBUG", "0")), getenv("HOST", "0.0.0.0"), int(getenv("PORT", "6969"))
 
-db_opts, db_opts_env = {"host":"127.0.0.1"}, {"MYSQL_DATABASE":"database","MYSQL_USER":"user","MYSQL_PASSWORD":"password","MYSQL_PORT":"port"}
-with Path("db/.env").open() as f: db_opts.update({db_opts_env[k]:v for k,v in (l.strip().split("=") for l in f) if k in db_opts_env})
+db_opts, db_opts_env = {"host":"0.0.0.0"}, {"MYSQL_DATABASE":"database","MYSQL_USER":"user","MYSQL_PASSWORD":"password","MYSQL_PORT":"port"}
+env_path = Path(".env")
+if env_path.exists():
+  with env_path.open() as f: db_opts.update({db_opts_env[k]:v for k,v in (l.strip().split("=") for l in f) if k in db_opts_env})
+if DEBUG > 0:
+  print("database options:")
+  for k, v in db_opts.items(): print(f"\t{k}={v}")
 
 # NOTE: database connection is established every request because the connector wasn't querying new data until new connection.
 #       there's probably a better solution, but for the current situation this works fine
@@ -102,7 +107,6 @@ class ScoreServer(socketserver.TCPServer):
   def handle_timeout(self): print("server timeout")
 
 if __name__ == "__main__":
-  HOST, PORT = getenv("HOST", "127.0.0.1"), int(getenv("PORT", "6969"))
   server = ScoreServer((HOST, PORT), ScoreServerHandler)
   print(f"server listening on: {HOST}:{PORT}")
   try:

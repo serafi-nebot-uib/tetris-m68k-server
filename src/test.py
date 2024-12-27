@@ -8,6 +8,7 @@ def tohex(d): return hexlify(d).decode()
 
 HOST, PORT = getenv("HOST", "127.0.0.1"), int(getenv("PORT", "6969"))
 
+print(f"connecting to {HOST}:{PORT}")
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
   s.connect((HOST, PORT))
 
