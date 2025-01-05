@@ -1,0 +1,40 @@
+name: tetris-m68k
+services:
+  db:
+    build:
+      context: ./db
+    restart: always
+    environment:
+      - MYSQL_DATABASE=${MYSQL_DATABASE}
+      - MYSQL_USER=${MYSQL_USER}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+    ports:
+      - "${MYSQL_PORT}:3306"
+    volumes:
+      - mysqldata:/var/lib/mysql
+  server:
+    build:
+      context: ./server
+    restart: always
+    environment:
+      - MYSQL_HOST=host.docker.internal
+      - MYSQL_DATABASE=${MYSQL_DATABASE}
+      - MYSQL_USER=${MYSQL_USER}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+    ports:
+      - "6969:6969"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "python", "test.py"]
+      interval: 30s
+      timeout: 5s
+      retries: 1
+  doctor:
+    image: docker:cli
+    volumes: ["/var/run/docker.sock:/var/run/docker.sock"]
+    command: ["/bin/sh", "-c", "while true; do sleep 60; docker ps -q -f health=unhealthy | xargs --no-run-if-empty docker restart; done"]
+    restart: unless-stopped
+volumes:
+  mysqldata:

@@ -53,10 +53,9 @@ def df_decode(data: bytes) -> tuple: return decode(df_types[data[0]], data) if d
 
 DEBUG, HOST, PORT = int(getenv("DEBUG", "0")), getenv("HOST", "0.0.0.0"), int(getenv("PORT", "6969"))
 
-db_opts, db_opts_env = {"host":"0.0.0.0"}, {"MYSQL_DATABASE":"database","MYSQL_USER":"user","MYSQL_PASSWORD":"password","MYSQL_PORT":"port"}
-env_path = Path(".env")
-if env_path.exists():
-  with env_path.open() as f: db_opts.update({db_opts_env[k]:v for k,v in (l.strip().split("=") for l in f) if k in db_opts_env})
+db_opts, db_opts_env = {}, {"MYSQL_HOST":"host","MYSQL_DATABASE":"database","MYSQL_USER":"user","MYSQL_PASSWORD":"password","MYSQL_PORT":"port"}
+db_opts.update({name: v for env, name in db_opts_env.items() if (v := getenv(env))})
+
 if DEBUG > 0:
   print("database options:")
   for k, v in db_opts.items(): print(f"\t{k}={v}")
