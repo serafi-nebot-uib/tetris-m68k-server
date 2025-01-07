@@ -6,7 +6,6 @@ import socketserver
 import mysql.connector
 from os import getenv
 from binascii import hexlify
-from pathlib import Path
 from enum import Enum
 from dataclasses import field
 from obj2bin import Const, Field, Child, pack, encode, decode
@@ -17,7 +16,7 @@ def strenc(s: str, l: int) -> bytes: return bytes(ord(s[i]) if i<len(s) else 0 f
 def strdec(b: bytes, l: int) -> str: return "".join(map(chr, b[:l]))
 
 # TODO: API definition not ideal, but better than previous one
-df_ids = { "Ack": 0x01, "Score": 0x02, "ScoreList": 0x03, "ScoreReq": 0x04, "ScorePub": 0x05 }
+df_ids = { "Ack": 0x01, "Score": 0x02, "ScoreList": 0x03, "ScoreReq": 0x04, "ScorePub": 0x05, "ScorePlacement": 0x06 }
 
 @pack(_id=Const(df_ids["Ack"], "B"))
 class Ack: pass
@@ -42,8 +41,11 @@ class ScoreList:
 @pack(_id=Const(df_ids["ScoreReq"], "B"), score_type=Child(ScoreType, count=1), count=Field(">H"))
 class ScoreReq: score_type: ScoreType; count: int
 
-@pack(_id=Const(df_ids["ScorePub"], "B"), score_type=Child(ScoreType, count=1), score=Child(Score))
-class ScorePub: score_type: ScoreType; score: Score
+@pack(_id=Const(df_ids["ScorePub"], "B"), score=Child(Score, count=1))
+class ScorePub: score: Score
+
+@pack(_id=Const(df_ids["ScorePlacement"], "B"), score_type=Child(ScoreType, count=1), value=Field(">L"))
+class ScorePlacement: score_type: ScoreType; value: int
 
 l = locals()
 df_types = { df_ids[x]: l[x] for x in df_ids }
@@ -63,7 +65,7 @@ if DEBUG > 0:
 # NOTE: database connection is established every request because the connector wasn't querying new data until new connection.
 #       there's probably a better solution, but for the current situation this works fine
 class ScoreServerHandler(socketserver.BaseRequestHandler):
-  def handle(self):
+  def handle(self): # noqa: C901
     cid = "[" + ":".join(map(str, self.client_address)) + "]"
     print(f"{cid} connection opened")
     try:
@@ -86,9 +88,13 @@ class ScoreServerHandler(socketserver.BaseRequestHandler):
             case ScorePub():
               with mysql.connector.connect(**db_opts) as conn, conn.cursor() as curr:
                 curr.execute("insert into score (player, type, score, level) values (%s, %s, %s, %s)",
-                             (recv.score.player, recv.score.score_type, recv.score.score, recv.score.level))
+                             (recv.score.player, str(recv.score.score_type), recv.score.score, recv.score.level))
                 conn.commit()
                 resp = Ack()
+            case ScorePlacement():
+              with mysql.connector.connect(**db_opts) as conn, conn.cursor() as curr:
+                curr.execute("select count(*)+1 as cnt from score where type = %s and score >= %s", (str(recv.score_type), recv.value))
+                resp = ScorePlacement(recv.score_type, curr.fetchone()[0])
           if resp is None: continue
           print(f"{cid} <- {resp}")
           data, sz = encode(resp)
