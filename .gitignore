@@ -7,6 +7,6 @@
 __pycache__
 
 # src
-db/data
 db/datagrip
+src/db/datagrip
 **/.env
